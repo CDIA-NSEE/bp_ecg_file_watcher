@@ -1,0 +1,17 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyrefly
+      - run: uv run pytest
+      - uses: docker/build-push-action@v5
+        with:
+          push: false
+          tags: bp_ecg_file_watcher:ci
