@@ -25,6 +25,8 @@ dev = [
     "ruff>=0.4",
     "pyrefly>=0.1",
     "reportlab>=4.0",
+    "taskipy>=1.12",
+    "bandit[toml]>=1.7",
 ]
 
 [build-system]
@@ -51,3 +53,15 @@ typeCheckingMode = "strict"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+
+[tool.taskipy.tasks]
+lint       = { cmd = "ruff check .",                                   help = "Run ruff linter" }
+fmt        = { cmd = "ruff format .",                                  help = "Auto-format with ruff" }
+fmt-check  = { cmd = "ruff format --check .",                          help = "Check formatting (no writes)" }
+typecheck  = { cmd = "pyrefly",                                        help = "Run pyrefly type checker" }
+bandit     = { cmd = "bandit -r src/ -c pyproject.toml",               help = "Run Bandit SAST" }
+test       = { cmd = "pytest",                                         help = "Run test suite" }
+ci         = { cmd = "task lint && task fmt-check && task typecheck && task bandit && task test", help = "Full CI gate" }
