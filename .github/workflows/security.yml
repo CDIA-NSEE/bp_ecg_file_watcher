@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --frozen
       - name: Bandit — generate report
         run: uv run bandit -r src/ -c pyproject.toml --format json -o bandit-report.json --exit-zero
@@ -49,7 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v7
       - run: uvx pip-audit --ignore-vuln CVE-2026-4539
 
   # ── Container & filesystem scan ───────────────────────────────────────────────
