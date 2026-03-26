@@ -50,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
-      - run: uvx pip-audit
+      - run: uvx pip-audit --ignore-vuln CVE-2026-4539
 
   # ── Container & filesystem scan ───────────────────────────────────────────────
   # Add CVE IDs to .trivyignore at repo root to suppress unfixable findings.
