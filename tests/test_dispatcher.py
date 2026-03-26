@@ -40,9 +40,9 @@ MINIO_ENDPOINT = "http://localhost:9000"
 ACCESS_KEY = "minioadmin"
 SECRET_KEY = "minioadmin"
 
-BUCKET_IMAGES = "bp-ecg-dev-images"
-BUCKET_INTAKE = "bp-ecg-dev-intake"
-BUCKET_REJECTED = "bp-ecg-dev-rejected"
+BUCKET_IMAGES = "bp-ecg-dev-copper"
+BUCKET_INTAKE = "bp-ecg-dev-iron"
+BUCKET_REJECTED = "bp-ecg-dev-coal"
 BUCKET_DLQ = "bp-ecg-dev-dlq"
 
 
@@ -171,16 +171,21 @@ class TestDeduplication:
     ) -> None:
         """Calling process_zip twice with the same ZIP must skip the second call."""
         zip_path = _make_zip_with_2page_pdf(tmp_path)
+        original_bytes = zip_path.read_bytes()
         store = DedupStore(tmp_db)
 
-        # First call — should process normally
+        # First call — should process normally (file is deleted from disk after)
         result1 = process_zip(
             zip_path=zip_path,
             s3_client=s3_client,
             settings=settings,
             dedup_store=store,
         )
-        # Second call — should be skipped
+
+        # Re-drop the exact same bytes to simulate the same file arriving again
+        zip_path.write_bytes(original_bytes)
+
+        # Second call — must be skipped because hash is already in dedup store
         result2 = process_zip(
             zip_path=zip_path,
             s3_client=s3_client,
@@ -292,6 +297,37 @@ class TestRetryLogic:
                 max_attempts=3,
             )
         assert call_count == 3
+
+    def test_file_not_found_skips_silently_no_retry(
+        self, tmp_path: Path, tmp_db: Path, settings: Settings
+    ) -> None:
+        """FileNotFoundError must not be retried — it must return immediately."""
+        call_count = 0
+
+        def missing_file(**_kwargs: object) -> str:
+            nonlocal call_count
+            call_count += 1
+            raise FileNotFoundError("no such file")
+
+        zip_path = tmp_path / "gone.zip"
+        # do NOT write the file — it's intentionally absent
+
+        with (
+            patch(
+                "bp_ecg_watcher.processor.pipeline.process_zip",
+                side_effect=missing_file,
+            ),
+            patch("bp_ecg_watcher.processor.pipeline.upload_dlq") as mock_dlq,
+        ):
+            _submit_with_retry(
+                zip_path=zip_path,
+                s3_client=MagicMock(),
+                settings=settings,
+                dedup_store=DedupStore(tmp_db),
+                max_attempts=3,
+            )
+        assert call_count == 1, "FileNotFoundError must not be retried"
+        mock_dlq.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

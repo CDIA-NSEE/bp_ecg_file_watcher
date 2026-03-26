@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import time
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -21,6 +20,7 @@ from typing import Any
 import structlog
 import zstandard
 
+from bp_ecg_watcher.config import Settings
 from bp_ecg_watcher.dedup.store import DedupStore
 from bp_ecg_watcher.metrics import (
     files_processed_total,
@@ -29,10 +29,9 @@ from bp_ecg_watcher.metrics import (
 )
 from bp_ecg_watcher.processor.extractor import rasterize_page2
 from bp_ecg_watcher.processor.hasher import hash_bytes
-from bp_ecg_watcher.processor.image import image_to_png_bytes, resize_image
+from bp_ecg_watcher.processor.image import image_to_pdf_bytes, resize_image
 from bp_ecg_watcher.storage.minio_client import (
     build_metadata,
-    create_s3_client,
     format_exc_info,
     upload_dlq,
     upload_image,
@@ -44,7 +43,6 @@ from bp_ecg_watcher.validator.pdf_validator import (
     ValidationSuccess,
     validate_pdf,
 )
-from bp_ecg_watcher.config import Settings
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -64,12 +62,13 @@ def process_zip(
     3. Extract the PDF from the ZIP.
     4. Upload original ZIP to the intake bucket (audit trail).
     5. Validate page count.
-    6. If invalid → route to the rejected bucket and return.
-    7. Rasterize page 2, resize, encode as PNG.
-    8. Compress PNG with zstandard (size known before upload).
-    9. Build metadata with exact compressed size (no copy_object race).
-    10. Upload compressed image to the images bucket.
-    11. Record the ZIP hash in the deduplication store.
+    6. Rasterize page 2 of the PDF at the configured DPI.
+    7. Resize the rasterized image to the configured max side.
+    8. Embed the resized image into a single-page PDF.
+    9. Hash the output PDF bytes and compress with zstandard.
+    10. Build metadata with exact compressed size (no copy_object race).
+    11. Upload compressed PDF to the copper bucket.
+    12. Record the ZIP hash in the deduplication store.
 
     Args:
         zip_path: Filesystem path of the ZIP file to process.
@@ -128,7 +127,7 @@ def process_zip(
 
     pdf_bytes: BytesIO = BytesIO(pdf_bytes_raw)
 
-    # ── 4. Upload intake (audit trail) ────────────────────────────────
+    # ── 4. Upload intake and delete local file ────────────────────────
     intake_key: str = f"{date_prefix}/{zip_path.stem}_{zip_hash[:8]}.zip"
     upload_intake(
         s3_client=s3_client,
@@ -138,6 +137,8 @@ def process_zip(
         source_zip_path=zip_path,
         watcher_version=settings.watcher_version,
     )
+    zip_path.unlink()
+    bound_logger.debug("local_zip_deleted", path=str(zip_path))
 
     # ── 5. Validate PDF ────────────────────────────────────────────────
     validation = validate_pdf(pdf_bytes)
@@ -164,26 +165,29 @@ def process_zip(
 
     assert isinstance(validation, ValidationSuccess)
 
-    # ── 6. Rasterize, resize, encode as PNG ───────────────────────────
+    # ── 6. Rasterize page 2 ────────────────────────────────────────────
     original_pdf_hash: str = hash_bytes(pdf_bytes_raw)
     pil_image = rasterize_page2(pdf_bytes, dpi=settings.rasterization_dpi)
+
+    # ── 7. Resize ─────────────────────────────────────────────────────
     resized_image, img_width, img_height = resize_image(
         pil_image, max_side_px=settings.image_max_side_px
     )
-    image_bytes: bytes = image_to_png_bytes(resized_image)
 
-    # ── 7. BLAKE3 hash of PNG ──────────────────────────────────────────
-    content_hash: str = hash_bytes(image_bytes)
-    image_key: str = f"{date_prefix}/{content_hash}.png.zst"
+    # ── 8. Embed resized image into a single-page PDF ─────────────────
+    output_pdf_bytes: bytes = image_to_pdf_bytes(
+        resized_image, dpi=settings.rasterization_dpi
+    )
+
+    # ── 9. Hash output PDF and compress with zstandard ────────────────
+    content_hash: str = hash_bytes(output_pdf_bytes)
+    pdf_key: str = f"{date_prefix}/{content_hash}.pdf.zst"
     bound_logger = bound_logger.bind(file_hash=content_hash[:12])
 
-    # ── 8. Compress BEFORE building metadata (no copy_object race) ────
-    cctx: zstandard.ZstdCompressor = zstandard.ZstdCompressor(
-        level=settings.zstd_level
-    )
-    compressed_bytes: bytes = cctx.compress(image_bytes)
+    cctx: zstandard.ZstdCompressor = zstandard.ZstdCompressor(level=settings.zstd_level)
+    compressed_bytes: bytes = cctx.compress(output_pdf_bytes)
 
-    # ── 9. Build metadata with exact compressed size ───────────────────
+    # ── 10. Build metadata with exact compressed size ─────────────────
     metadata: dict[str, str] = build_metadata(
         content_hash=content_hash,
         source_zip_path=zip_path,
@@ -201,20 +205,20 @@ def process_zip(
         source_intake_key=intake_key,
     )
 
-    # ── 10. Upload compressed image ────────────────────────────────────
+    # ── 11. Upload compressed PDF ─────────────────────────────────────
     upload_image(
         s3_client=s3_client,
         bucket=settings.bucket_images,
-        key=image_key,
+        key=pdf_key,
         compressed_bytes=compressed_bytes,
         metadata=metadata,
     )
 
-    # ── 11. Record deduplication ───────────────────────────────────────
+    # ── 12. Record deduplication ──────────────────────────────────────
     dedup_store.record_processed(
         zip_hash=zip_hash,
         source_path=zip_path,
-        destination_key=image_key,
+        destination_key=pdf_key,
     )
 
     processing_end: datetime = datetime.now(UTC)
@@ -225,11 +229,11 @@ def process_zip(
 
     bound_logger.info(
         "zip_processed_ok",
-        image_key=image_key,
+        pdf_key=pdf_key,
         compressed_bytes=len(compressed_bytes),
         elapsed_s=round(elapsed_s, 3),
     )
-    return image_key
+    return pdf_key
 
 
 def submit_with_retry(
@@ -263,6 +267,10 @@ def submit_with_retry(
                 settings=settings,
                 dedup_store=dedup_store,
             )
+            return
+        except FileNotFoundError:
+            # File was already deleted by a concurrent worker — skip silently.
+            logger.debug("processing_skipped_file_gone", path=str(zip_path))
             return
         except Exception as exc:  # noqa: BLE001
             last_exc = exc

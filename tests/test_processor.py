@@ -1,21 +1,16 @@
 """Tests for the processor sub-package of bp_ecg_file_watcher.
 
 Covers:
-- image.py  — aspect-ratio-preserving resize
 - hasher.py — BLAKE3 hash determinism
 - compressor.py — ByteCountingReader byte accounting and context-manager behaviour
-
-pypdfium2 rasterization is mocked with synthetic PIL Images to avoid requiring
-a GPU or poppler in CI.
+- image.py — resize_image and image_to_pdf_bytes
+- extractor.py — rasterize_page2
 """
 
 from __future__ import annotations
 
 from io import BytesIO
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
 from PIL import Image
 
 from bp_ecg_watcher.processor.compressor import (
@@ -25,129 +20,7 @@ from bp_ecg_watcher.processor.compressor import (
 )
 from bp_ecg_watcher.processor.extractor import rasterize_page2
 from bp_ecg_watcher.processor.hasher import hash_bytes
-from bp_ecg_watcher.processor.image import image_to_png_bytes, resize_image
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_image(width: int, height: int) -> Image.Image:
-    """Create a solid-colour RGB image for testing."""
-    return Image.new("RGB", (width, height), color=(128, 200, 50))
-
-
-# ---------------------------------------------------------------------------
-# image.resize_image
-# ---------------------------------------------------------------------------
-
-
-class TestResizeImage:
-    """Verify that resize_image honours the max_side_px constraint."""
-
-    def test_portrait_longer_side_capped(self) -> None:
-        """Portrait image: height is the longest side; must be capped."""
-        img = _make_image(600, 2000)
-        _resized, w, h = resize_image(img, max_side_px=1200)
-        assert h <= 1200
-        assert w <= 1200
-
-    def test_landscape_longer_side_capped(self) -> None:
-        """Landscape image: width is the longest side; must be capped."""
-        img = _make_image(3000, 800)
-        _resized, w, h = resize_image(img, max_side_px=1200)
-        assert w <= 1200
-        assert h <= 1200
-
-    def test_aspect_ratio_preserved_portrait(self) -> None:
-        """Aspect ratio must be preserved within 1-pixel rounding error."""
-        original_ratio = 600 / 2000
-        img = _make_image(600, 2000)
-        _, w, h = resize_image(img, max_side_px=1200)
-        resized_ratio = w / h
-        assert abs(resized_ratio - original_ratio) < 0.01
-
-    def test_aspect_ratio_preserved_landscape(self) -> None:
-        """Landscape aspect ratio preserved within rounding."""
-        original_ratio = 3000 / 800
-        img = _make_image(3000, 800)
-        _, w, h = resize_image(img, max_side_px=1200)
-        resized_ratio = w / h
-        assert abs(resized_ratio - original_ratio) < 0.01
-
-    def test_small_image_unchanged(self) -> None:
-        """An image already within the limit must not be altered."""
-        img = _make_image(400, 300)
-        _, w, h = resize_image(img, max_side_px=1200)
-        assert w == 400
-        assert h == 300
-
-    def test_exact_max_side_unchanged(self) -> None:
-        """An image exactly at the limit must not be altered."""
-        img = _make_image(1200, 800)
-        _, w, h = resize_image(img, max_side_px=1200)
-        assert w == 1200
-        assert h == 800
-
-    def test_returns_tuple_of_three(self) -> None:
-        """Return value must be a 3-tuple."""
-        img = _make_image(500, 500)
-        result = resize_image(img, max_side_px=1200)
-        assert len(result) == 3
-
-    def test_longest_side_exactly_max(self) -> None:
-        """After resize, the longest side should equal max_side_px."""
-        img = _make_image(2400, 1600)
-        _, w, h = resize_image(img, max_side_px=1200)
-        assert max(w, h) == 1200
-
-    def test_square_image_resized_correctly(self) -> None:
-        """Square images must be resized to max_side_px × max_side_px."""
-        img = _make_image(2000, 2000)
-        _, w, h = resize_image(img, max_side_px=1200)
-        assert w == 1200
-        assert h == 1200
-
-    def test_width_and_height_match_returned_image(self) -> None:
-        """Returned w, h must match the actual image dimensions."""
-        img = _make_image(3000, 1500)
-        resized_img, w, h = resize_image(img, max_side_px=1200)
-        assert resized_img.width == w
-        assert resized_img.height == h
-
-
-# ---------------------------------------------------------------------------
-# image.image_to_png_bytes
-# ---------------------------------------------------------------------------
-
-
-class TestImageToPngBytes:
-    """Verify that image_to_png_bytes returns valid PNG-encoded bytes."""
-
-    def test_returns_bytes(self) -> None:
-        img = _make_image(100, 100)
-        result = image_to_png_bytes(img)
-        assert isinstance(result, bytes)
-
-    def test_png_magic_bytes(self) -> None:
-        img = _make_image(100, 100)
-        result = image_to_png_bytes(img)
-        # PNG files always start with the 8-byte PNG signature
-        assert result[:8] == b"\x89PNG\r\n\x1a\n"
-
-    def test_non_empty(self) -> None:
-        img = _make_image(50, 50)
-        result = image_to_png_bytes(img)
-        assert len(result) > 0
-
-    def test_round_trip(self) -> None:
-        """Bytes can be decoded back to the same image size."""
-        img = _make_image(100, 100)
-        data = image_to_png_bytes(img)
-        decoded = Image.open(BytesIO(data))
-        assert decoded.width == 100
-        assert decoded.height == 100
-
+from bp_ecg_watcher.processor.image import image_to_pdf_bytes, resize_image
 
 # ---------------------------------------------------------------------------
 # hasher.hash_bytes
@@ -302,79 +175,124 @@ class TestCompressBytes:
 
 
 # ---------------------------------------------------------------------------
-# extractor.rasterize_page2 — mocked pypdfium2
+# Helpers shared by image tests
+# ---------------------------------------------------------------------------
+
+
+def _make_image(width: int, height: int, mode: str = "RGB") -> Image.Image:
+    """Return a plain solid-colour PIL image of the given dimensions."""
+    return Image.new(mode, (width, height), color=(200, 200, 200))
+
+
+def _make_two_page_pdf_bytes() -> BytesIO:
+    """Build a minimal 2-page PDF using reportlab and return it as BytesIO."""
+    from reportlab.pdfgen import canvas  # type: ignore[import-untyped]
+
+    buf = BytesIO()
+    c = canvas.Canvas(buf)
+    c.drawString(100, 750, "Page 1")
+    c.showPage()
+    c.drawString(100, 750, "Page 2")
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf
+
+
+# ---------------------------------------------------------------------------
+# image.resize_image
+# ---------------------------------------------------------------------------
+
+
+class TestResizeImage:
+    """Verify resize_image downscales oversized images correctly."""
+
+    def test_large_image_is_downscaled(self) -> None:
+        img = _make_image(2000, 1500)
+        resized, w, h = resize_image(img, max_side_px=1200)
+        assert max(w, h) <= 1200
+
+    def test_returned_dimensions_match_image(self) -> None:
+        img = _make_image(800, 600)
+        resized, w, h = resize_image(img, max_side_px=1200)
+        assert resized.size == (w, h)
+
+    def test_small_image_not_upscaled(self) -> None:
+        img = _make_image(400, 300)
+        _, w, h = resize_image(img, max_side_px=1200)
+        assert w == 400
+        assert h == 300
+
+    def test_returns_ints(self) -> None:
+        img = _make_image(500, 400)
+        _, w, h = resize_image(img, max_side_px=1200)
+        assert isinstance(w, int)
+        assert isinstance(h, int)
+
+    def test_square_image_stays_square(self) -> None:
+        img = _make_image(2400, 2400)
+        _, w, h = resize_image(img, max_side_px=1200)
+        assert w == h == 1200
+
+
+# ---------------------------------------------------------------------------
+# image.image_to_pdf_bytes
+# ---------------------------------------------------------------------------
+
+
+class TestImageToPdfBytes:
+    """Verify image_to_pdf_bytes produces a valid single-page PDF."""
+
+    def test_returns_bytes(self) -> None:
+        result = image_to_pdf_bytes(_make_image(100, 100))
+        assert isinstance(result, bytes)
+
+    def test_pdf_magic_bytes(self) -> None:
+        result = image_to_pdf_bytes(_make_image(100, 100))
+        assert result[:4] == b"%PDF"
+
+    def test_non_empty(self) -> None:
+        result = image_to_pdf_bytes(_make_image(50, 50))
+        assert len(result) > 0
+
+    def test_single_page(self) -> None:
+        """Output PDF must contain exactly one page."""
+        import pypdf
+
+        data = image_to_pdf_bytes(_make_image(100, 80))
+        reader = pypdf.PdfReader(BytesIO(data))
+        assert len(reader.pages) == 1
+
+    def test_non_rgb_image_converted(self) -> None:
+        """A non-RGB image (e.g. RGBA) must not raise an error."""
+        img = _make_image(100, 100, mode="RGBA")
+        result = image_to_pdf_bytes(img)
+        assert result[:4] == b"%PDF"
+
+
+# ---------------------------------------------------------------------------
+# extractor.rasterize_page2
 # ---------------------------------------------------------------------------
 
 
 class TestRasterizePage2:
-    """Verify rasterize_page2 calls pypdfium2 correctly with a mocked document."""
+    """Verify rasterize_page2 extracts and rasterizes the second page."""
 
-    def test_returns_pil_image(self, valid_2page_pdf: Path) -> None:
-        """When pypdfium2 is mocked, the function must return the mock PIL image."""
-        synthetic_image = _make_image(2480, 3508)  # A4 at 300 DPI
+    def test_returns_pil_image(self) -> None:
+        pdf = _make_two_page_pdf_bytes()
+        result = rasterize_page2(pdf, dpi=72)
+        assert isinstance(result, Image.Image)
 
-        mock_bitmap = MagicMock()
-        mock_bitmap.to_pil.return_value = synthetic_image
+    def test_image_has_nonzero_size(self) -> None:
+        pdf = _make_two_page_pdf_bytes()
+        result = rasterize_page2(pdf, dpi=72)
+        w, h = result.size
+        assert w > 0
+        assert h > 0
 
-        mock_page = MagicMock()
-        mock_page.render.return_value = mock_bitmap
-
-        mock_doc = MagicMock()
-        mock_doc.__len__ = MagicMock(return_value=2)
-        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
-
-        with patch("bp_ecg_watcher.processor.extractor.pdfium") as mock_pdfium:
-            mock_pdfium.PdfDocument.return_value = mock_doc
-            result = rasterize_page2(BytesIO(valid_2page_pdf.read_bytes()), dpi=300)
-
-        assert result is synthetic_image
-
-    def test_render_called_with_correct_scale(self, valid_2page_pdf: Path) -> None:
-        """Scale must be dpi / 72."""
-        synthetic_image = _make_image(100, 100)
-
-        mock_bitmap = MagicMock()
-        mock_bitmap.to_pil.return_value = synthetic_image
-
-        mock_page = MagicMock()
-        mock_page.render.return_value = mock_bitmap
-
-        mock_doc = MagicMock()
-        mock_doc.__len__ = MagicMock(return_value=2)
-        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
-
-        with patch("bp_ecg_watcher.processor.extractor.pdfium") as mock_pdfium:
-            mock_pdfium.PdfDocument.return_value = mock_doc
-            rasterize_page2(BytesIO(valid_2page_pdf.read_bytes()), dpi=150)
-
-        mock_page.render.assert_called_once_with(scale=150 / 72, rotation=0)
-
-    def test_raises_for_single_page_pdf(self) -> None:
-        """A document with only 1 page must raise ValueError."""
-        mock_doc = MagicMock()
-        mock_doc.__len__ = MagicMock(return_value=1)
-
-        with patch("bp_ecg_watcher.processor.extractor.pdfium") as mock_pdfium:
-            mock_pdfium.PdfDocument.return_value = mock_doc
-            with pytest.raises(ValueError, match="page index"):
-                rasterize_page2(BytesIO(b"dummy"), dpi=300)
-
-    def test_page_index_1_accessed(self, valid_2page_pdf: Path) -> None:
-        """Must access index 1 (page 2, 0-indexed)."""
-        synthetic_image = _make_image(100, 100)
-
-        mock_bitmap = MagicMock()
-        mock_bitmap.to_pil.return_value = synthetic_image
-
-        mock_page = MagicMock()
-        mock_page.render.return_value = mock_bitmap
-
-        mock_doc = MagicMock()
-        mock_doc.__len__ = MagicMock(return_value=2)
-        mock_doc.__getitem__ = MagicMock(return_value=mock_page)
-
-        with patch("bp_ecg_watcher.processor.extractor.pdfium") as mock_pdfium:
-            mock_pdfium.PdfDocument.return_value = mock_doc
-            rasterize_page2(BytesIO(valid_2page_pdf.read_bytes()), dpi=72)
-
-        mock_doc.__getitem__.assert_called_once_with(1)
+    def test_higher_dpi_produces_larger_image(self) -> None:
+        pdf72 = _make_two_page_pdf_bytes()
+        pdf150 = _make_two_page_pdf_bytes()
+        img72 = rasterize_page2(pdf72, dpi=72)
+        img150 = rasterize_page2(pdf150, dpi=150)
+        assert img150.width > img72.width

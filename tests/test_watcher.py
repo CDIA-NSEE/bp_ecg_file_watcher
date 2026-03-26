@@ -222,3 +222,56 @@ class TestEnqueue:
             handler._enqueue(z, debounce=False)
 
         assert q.qsize() == 3
+
+
+# ---------------------------------------------------------------------------
+# Inflight-dedup tests  (prevents Linux double-enqueue from on_closed + on_modified)
+# ---------------------------------------------------------------------------
+
+
+class TestInflightDedup:
+    """ZipFileHandler must not enqueue the same path more than once when
+    both FileClosedEvent and FileModifiedEvent fire for the same file."""
+
+    def test_second_closed_event_ignored(self, tmp_path: Path) -> None:
+        """Two FileClosedEvents for the same file must only enqueue once."""
+        zip_file = _make_zip(tmp_path)
+        handler, q = _make_handler(tmp_path)
+
+        event = FileClosedEvent(str(zip_file))
+        handler.on_closed(event)
+        handler.on_closed(event)  # second event, same file
+
+        assert q.qsize() == 1
+
+    def test_closed_then_modified_only_enqueues_once(self, tmp_path: Path) -> None:
+        """After on_closed enqueues a path, on_modified must not enqueue it again."""
+        zip_file = _make_zip(tmp_path)
+        handler, q = _make_handler(tmp_path, debounce_polls=2, debounce_interval_ms=0)
+
+        handler.on_closed(FileClosedEvent(str(zip_file)))
+        with patch("bp_ecg_watcher.watcher.handler.is_file_stable", return_value=True):
+            handler.on_modified(FileModifiedEvent(str(zip_file)))
+
+        assert q.qsize() == 1
+
+    def test_modified_then_closed_only_enqueues_once(self, tmp_path: Path) -> None:
+        """After on_modified enqueues a path, on_closed must not enqueue it again."""
+        zip_file = _make_zip(tmp_path)
+        handler, q = _make_handler(tmp_path, debounce_polls=2, debounce_interval_ms=0)
+
+        with patch("bp_ecg_watcher.watcher.handler.is_file_stable", return_value=True):
+            handler.on_modified(FileModifiedEvent(str(zip_file)))
+        handler.on_closed(FileClosedEvent(str(zip_file)))
+
+        assert q.qsize() == 1
+
+    def test_distinct_files_all_enqueued(self, tmp_path: Path) -> None:
+        """Distinct files must each be enqueued independently."""
+        zips = [_make_zip(tmp_path, f"ecg_{i}.zip") for i in range(3)]
+        handler, q = _make_handler(tmp_path)
+
+        for z in zips:
+            handler.on_closed(FileClosedEvent(str(z)))
+
+        assert q.qsize() == 3

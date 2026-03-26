@@ -28,8 +28,14 @@ import structlog
 
 from bp_ecg_watcher.config import Settings
 from bp_ecg_watcher.dedup.store import DedupStore
-from bp_ecg_watcher.processor.pipeline import process_zip, submit_with_retry  # noqa: F401 (re-export)
-from bp_ecg_watcher.storage.minio_client import create_s3_client, upload_dlq  # noqa: F401 (re-export)
+from bp_ecg_watcher.processor.pipeline import (  # noqa: F401 (re-export)
+    process_zip,
+    submit_with_retry,
+)
+from bp_ecg_watcher.storage.minio_client import (  # noqa: F401 (re-export)
+    create_s3_client,
+    upload_dlq,
+)
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
@@ -129,4 +135,3 @@ class Dispatcher:
             self._queue.task_done()
 
         logger.debug("dispatcher_consumer_exited")
-

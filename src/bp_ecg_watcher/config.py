@@ -27,9 +27,9 @@ class Settings(BaseSettings):
     minio_use_ssl: bool = False
 
     # Bucket names
-    bucket_images: str = "bp-ecg-dev-images"
-    bucket_intake: str = "bp-ecg-dev-intake"
-    bucket_rejected: str = "bp-ecg-dev-rejected"
+    bucket_images: str = "bp-ecg-dev-copper"
+    bucket_intake: str = "bp-ecg-dev-iron"
+    bucket_rejected: str = "bp-ecg-dev-coal"
     bucket_dlq: str = "bp-ecg-dev-dlq"
 
     # Worker pool

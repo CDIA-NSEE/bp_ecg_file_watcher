@@ -1,7 +1,7 @@
 """MINIO/S3 client wrapper for the bp_ecg_file_watcher pipeline.
 
 Provides upload helpers for processed images (bp-ecg-{env}-images),
-intake ZIPs (bp-ecg-{env}-intake), rejected files (bp-ecg-{env}-rejected),
+intake ZIPs (bp-ecg-{env}-iron), rejected files (bp-ecg-{env}-coal),
 and dead-letter queue entries (bp-ecg-{env}-dlq).
 
 All uploads use streaming — no intermediate files are written to disk.
@@ -44,13 +44,13 @@ def build_metadata(
     supports string values.
 
     Args:
-        content_hash: BLAKE3 hex digest of the raw (uncompressed) PNG bytes.
+        content_hash: BLAKE3 hex digest of the rasterized single-page PDF bytes.
         source_zip_path: Filesystem path of the source ZIP file.
-        page_count: Number of pages in the validated PDF (always 2).
+        page_count: Number of pages in the validated source PDF (always 2).
         image_width: Width in pixels of the rasterized image after resize.
         image_height: Height in pixels of the rasterized image after resize.
         rasterization_dpi: DPI used when rasterizing the PDF page.
-        original_pdf_hash: BLAKE3 hex digest of the raw PDF bytes.
+        original_pdf_hash: BLAKE3 hex digest of the raw PDF bytes from the ZIP.
         file_size_zip_bytes: Size in bytes of the original ZIP file.
         file_size_compressed_bytes: Size in bytes of the uploaded zstd stream.
         processing_start: UTC timestamp when processing of this ZIP began.
@@ -76,7 +76,6 @@ def build_metadata(
         "pdf-pages": str(page_count),
         "image-width": str(image_width),
         "image-height": str(image_height),
-        "image-format": "PNG",
         "rasterization-dpi": str(rasterization_dpi),
         "source-pdf-hash": original_pdf_hash,
         "file-size-original-bytes": str(file_size_zip_bytes),

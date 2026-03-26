@@ -130,6 +130,14 @@ def main() -> None:
 
     log.info("observer_started", watch_dir=str(settings.watch_directory))
 
+    # ── Enqueue any ZIPs already present at startup ─────────────────────
+    existing_zips = sorted(settings.watch_directory.glob("*.zip"))
+    if existing_zips:
+        log.info("startup_backfill_found", count=len(existing_zips))
+        for zip_path in existing_zips:
+            task_queue.put(zip_path)
+            log.debug("startup_backfill_enqueued", path=str(zip_path))
+
     # ── Shutdown handler ────────────────────────────────────────────────
     def _shutdown(signum: int, frame: types.FrameType | None) -> None:
         """Handle SIGTERM / SIGINT for graceful shutdown.

@@ -59,11 +59,7 @@ class DedupStore:
             ``True`` if the hash is present; ``False`` otherwise.
         """
         with self._db.connection_context():
-            return (
-                self._model.select()
-                .where(self._model.zip_hash == zip_hash)
-                .exists()
-            )
+            return self._model.select().where(self._model.zip_hash == zip_hash).exists()
 
     def record_processed(
         self,

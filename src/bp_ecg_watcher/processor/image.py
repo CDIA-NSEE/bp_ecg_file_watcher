@@ -1,8 +1,7 @@
-"""Image resizing utilities for the bp_ecg_file_watcher processor.
+"""Image resizing and PDF encoding utilities for the bp_ecg_file_watcher processor.
 
-Provides aspect-ratio-preserving downscaling of PIL Images using Pillow's
-thumbnail() method, which guarantees that neither dimension exceeds the specified
-maximum while maintaining the original proportions.
+Provides aspect-ratio-preserving downscaling of PIL Images and conversion of a
+resized image into a single-page PDF byte string ready for zstd compression.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ def resize_image(
         A tuple of ``(resized_image, width, height)``.
     """
     original_size = (image.width, image.height)
-    image.thumbnail((max_side_px, max_side_px), Image.LANCZOS)
+    image.thumbnail((max_side_px, max_side_px), Image.Resampling.LANCZOS)
     new_size = (image.width, image.height)
 
     if original_size != new_size:
@@ -56,15 +55,21 @@ def resize_image(
     return image, image.width, image.height
 
 
-def image_to_png_bytes(image: Image.Image) -> bytes:
-    """Encode a PIL Image as a PNG byte string.
+def image_to_pdf_bytes(image: Image.Image, dpi: int = 300) -> bytes:
+    """Encode a PIL Image as a single-page PDF byte string.
+
+    The image is converted to RGB mode if necessary (PDF does not support
+    palette or transparency modes directly). The *dpi* value is embedded as
+    the image resolution metadata within the PDF.
 
     Args:
         image: Source PIL Image.
+        dpi: Resolution to embed in the PDF. Should match the rasterization DPI.
 
     Returns:
-        Raw PNG-encoded bytes.
+        Raw PDF-encoded bytes containing a single page with the image.
     """
+    rgb_image = image.convert("RGB") if image.mode != "RGB" else image
     buffer = BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
+    rgb_image.save(buffer, format="PDF", resolution=dpi)
     return buffer.getvalue()

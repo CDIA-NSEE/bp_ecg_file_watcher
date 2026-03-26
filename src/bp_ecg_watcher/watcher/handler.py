@@ -8,6 +8,7 @@ queue.Queue to apply backpressure when workers fall behind.
 from __future__ import annotations
 
 import queue
+import threading
 from pathlib import Path
 
 import structlog
@@ -55,6 +56,8 @@ class ZipFileHandler(FileSystemEventHandler):
         self._queue: queue.Queue[Path] = task_queue
         self._debounce_polls: int = debounce_polls
         self._debounce_interval_ms: int = debounce_interval_ms
+        self._inflight: set[Path] = set()
+        self._inflight_lock: threading.Lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public event callbacks
@@ -118,6 +121,12 @@ class ZipFileHandler(FileSystemEventHandler):
             if not stable:
                 logger.info("handler_file_unstable", path=str(path))
                 return
+
+        with self._inflight_lock:
+            if path in self._inflight:
+                logger.debug("handler_already_inflight", path=str(path))
+                return
+            self._inflight.add(path)
 
         logger.info("handler_enqueuing", path=str(path))
         self._queue.put(path)  # blocks if queue is full (backpressure)

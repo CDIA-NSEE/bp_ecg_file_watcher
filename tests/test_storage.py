@@ -35,9 +35,9 @@ from bp_ecg_watcher.storage.minio_client import (
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
-BUCKET_IMAGES = "bp-ecg-dev-images"
-BUCKET_REJECTED = "bp-ecg-dev-rejected"
-BUCKET_INTAKE = "bp-ecg-dev-intake"
+BUCKET_IMAGES = "bp-ecg-dev-copper"
+BUCKET_REJECTED = "bp-ecg-dev-coal"
+BUCKET_INTAKE = "bp-ecg-dev-iron"
 BUCKET_DLQ = "bp-ecg-dev-dlq"
 
 _ALL_BUCKETS = [BUCKET_IMAGES, BUCKET_REJECTED, BUCKET_INTAKE, BUCKET_DLQ]
@@ -51,7 +51,6 @@ _REQUIRED_METADATA_KEYS = {
     "pdf-pages",
     "image-width",
     "image-height",
-    "image-format",
     "rasterization-dpi",
     "source-pdf-hash",
     "file-size-original-bytes",
@@ -124,10 +123,10 @@ class TestBuildMetadata:
             content_hash="abc123",
             source_zip_path=source_zip,
             page_count=2,
-            image_width=1200,
-            image_height=800,
+            image_width=640,
+            image_height=480,
             rasterization_dpi=300,
-            original_pdf_hash="pdf456",
+            original_pdf_hash="orighash",
             file_size_zip_bytes=50000,
             file_size_compressed_bytes=12000,
             processing_start=processing_start,
@@ -145,10 +144,10 @@ class TestBuildMetadata:
             content_hash="abc123",
             source_zip_path=source_zip,
             page_count=2,
-            image_width=1200,
-            image_height=800,
+            image_width=640,
+            image_height=480,
             rasterization_dpi=300,
-            original_pdf_hash="pdf456",
+            original_pdf_hash="orighash",
             file_size_zip_bytes=50000,
             file_size_compressed_bytes=12000,
             processing_start=processing_start,
@@ -169,10 +168,10 @@ class TestBuildMetadata:
             content_hash="x",
             source_zip_path=source_zip,
             page_count=2,
-            image_width=100,
-            image_height=100,
+            image_width=640,
+            image_height=480,
             rasterization_dpi=300,
-            original_pdf_hash="y",
+            original_pdf_hash="orighash",
             file_size_zip_bytes=1000,
             file_size_compressed_bytes=500,
             processing_start=processing_start,
@@ -191,10 +190,10 @@ class TestBuildMetadata:
             content_hash="h",
             source_zip_path=source_zip,
             page_count=2,
-            image_width=100,
-            image_height=100,
+            image_width=640,
+            image_height=480,
             rasterization_dpi=300,
-            original_pdf_hash="p",
+            original_pdf_hash="orighash",
             file_size_zip_bytes=1000,
             file_size_compressed_bytes=500,
             processing_start=processing_start,
@@ -203,27 +202,6 @@ class TestBuildMetadata:
             watcher_version="0.1.0",
         )
         assert meta["compression-algorithm"] == "zstd-9"
-
-    def test_image_format_is_png(
-        self, source_zip: Path, processing_start: datetime
-    ) -> None:
-        """image-format must always be 'PNG'."""
-        meta = build_metadata(
-            content_hash="h",
-            source_zip_path=source_zip,
-            page_count=2,
-            image_width=100,
-            image_height=100,
-            rasterization_dpi=300,
-            original_pdf_hash="p",
-            file_size_zip_bytes=1000,
-            file_size_compressed_bytes=500,
-            processing_start=processing_start,
-            pdf_producer="p",
-            pdf_creator="c",
-            watcher_version="0.1.0",
-        )
-        assert meta["image-format"] == "PNG"
 
 
 # ---------------------------------------------------------------------------
@@ -279,10 +257,10 @@ class TestUploadImage:
             content_hash="testhash",
             source_zip_path=source_zip,
             page_count=2,
-            image_width=100,
-            image_height=100,
+            image_width=640,
+            image_height=480,
             rasterization_dpi=300,
-            original_pdf_hash="pdfhash",
+            original_pdf_hash="orighashtest",
             file_size_zip_bytes=5000,
             file_size_compressed_bytes=len(compressed),
             processing_start=processing_start,
@@ -293,12 +271,12 @@ class TestUploadImage:
         upload_image(
             s3_client=s3,
             bucket=BUCKET_IMAGES,
-            key="2024/01/01/testhash.png.zst",
+            key="2024/01/01/testhash.pdf.zst",
             compressed_bytes=compressed,
             metadata=meta,
         )
         # Verify the object exists
-        resp = s3.head_object(Bucket=BUCKET_IMAGES, Key="2024/01/01/testhash.png.zst")
+        resp = s3.head_object(Bucket=BUCKET_IMAGES, Key="2024/01/01/testhash.pdf.zst")
         assert resp["ResponseMetadata"]["HTTPStatusCode"] == 200
 
     def test_stored_metadata_all_strings(
@@ -316,10 +294,10 @@ class TestUploadImage:
             content_hash="h2",
             source_zip_path=source_zip,
             page_count=2,
-            image_width=100,
-            image_height=100,
+            image_width=800,
+            image_height=600,
             rasterization_dpi=300,
-            original_pdf_hash="p2",
+            original_pdf_hash="orighashh2",
             file_size_zip_bytes=1000,
             file_size_compressed_bytes=len(compressed),
             processing_start=processing_start,
@@ -330,11 +308,11 @@ class TestUploadImage:
         upload_image(
             s3_client=s3,
             bucket=BUCKET_IMAGES,
-            key="2024/01/01/h2.png.zst",
+            key="2024/01/01/h2.pdf.zst",
             compressed_bytes=compressed,
             metadata=meta,
         )
-        resp = s3.head_object(Bucket=BUCKET_IMAGES, Key="2024/01/01/h2.png.zst")
+        resp = s3.head_object(Bucket=BUCKET_IMAGES, Key="2024/01/01/h2.pdf.zst")
         stored_meta: dict[str, str] = resp["Metadata"]
         for key, value in stored_meta.items():
             assert isinstance(value, str), f"Key '{key}' is not a string"

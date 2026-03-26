@@ -38,9 +38,9 @@ class TestSettings:
             minio_access_key="key",
             minio_secret_key="secret",
         )
-        assert s.bucket_images == "bp-ecg-dev-images"
-        assert s.bucket_intake == "bp-ecg-dev-intake"
-        assert s.bucket_rejected == "bp-ecg-dev-rejected"
+        assert s.bucket_images == "bp-ecg-dev-copper"
+        assert s.bucket_intake == "bp-ecg-dev-iron"
+        assert s.bucket_rejected == "bp-ecg-dev-coal"
 
     def test_default_workers_and_queue(self, tmp_path: Path) -> None:
         """Default concurrency parameters should match the spec."""
@@ -52,6 +52,17 @@ class TestSettings:
         )
         assert s.max_workers == 4
         assert s.queue_maxsize == 50
+
+    def test_default_rasterization_settings(self, tmp_path: Path) -> None:
+        """Default rasterization and image resize parameters should match the spec."""
+        s = Settings(
+            watch_directory=tmp_path,
+            minio_endpoint="http://localhost:9000",
+            minio_access_key="key",
+            minio_secret_key="secret",
+        )
+        assert s.rasterization_dpi == 300
+        assert s.image_max_side_px == 1200
 
     def test_watcher_version_is_string(self, tmp_path: Path) -> None:
         """watcher_version must always be a non-empty string."""

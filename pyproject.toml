@@ -58,10 +58,11 @@ addopts = "--cov=src --cov-report=term-missing --cov-fail-under=80"
 exclude_dirs = ["tests", ".venv"]
 
 [tool.taskipy.tasks]
+run        = { cmd = "python -m bp_ecg_watcher.main",                  help = "Run the watcher locally (requires .env)" }
 lint       = { cmd = "ruff check .",                                   help = "Run ruff linter" }
 fmt        = { cmd = "ruff format .",                                  help = "Auto-format with ruff" }
 fmt-check  = { cmd = "ruff format --check .",                          help = "Check formatting (no writes)" }
-typecheck  = { cmd = "pyrefly",                                        help = "Run pyrefly type checker" }
+typecheck  = { cmd = "pyrefly check .",                                        help = "Run pyrefly type checker" }
 bandit     = { cmd = "bandit -r src/ -c pyproject.toml",               help = "Run Bandit SAST" }
 test       = { cmd = "pytest",                                         help = "Run test suite" }
 ci         = { cmd = "task lint && task fmt-check && task typecheck && task bandit && task test", help = "Full CI gate" }
