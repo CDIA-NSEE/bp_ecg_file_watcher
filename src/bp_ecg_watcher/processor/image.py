@@ -1,7 +1,7 @@
 """Image resizing and PDF encoding utilities for the bp_ecg_file_watcher processor.
 
 Provides aspect-ratio-preserving downscaling of PIL Images and conversion of a
-resized image into a single-page PDF byte string ready for zstd compression.
+list of resized images into a multi-page PDF byte string ready for zstd compression.
 """
 
 from __future__ import annotations
@@ -55,21 +55,35 @@ def resize_image(
     return image, image.width, image.height
 
 
-def image_to_pdf_bytes(image: Image.Image, dpi: int = 300) -> bytes:
-    """Encode a PIL Image as a single-page PDF byte string.
+def images_to_pdf_bytes(images: list[Image.Image], dpi: int = 300) -> bytes:
+    """Encode a list of PIL Images as a multi-page PDF byte string.
 
-    The image is converted to RGB mode if necessary (PDF does not support
-    palette or transparency modes directly). The *dpi* value is embedded as
-    the image resolution metadata within the PDF.
+    Each image becomes one page in the output PDF. All images are converted to
+    RGB mode if necessary (PDF does not support palette or transparency modes
+    directly). The *dpi* value is embedded as the image resolution metadata.
 
     Args:
-        image: Source PIL Image.
+        images: One or more PIL Images, each becoming a page.
         dpi: Resolution to embed in the PDF. Should match the rasterization DPI.
 
     Returns:
-        Raw PDF-encoded bytes containing a single page with the image.
+        Raw PDF-encoded bytes containing one page per image.
+
+    Raises:
+        ValueError: If *images* is empty.
     """
-    rgb_image = image.convert("RGB") if image.mode != "RGB" else image
+    if not images:
+        raise ValueError("images must not be empty")
+
+    rgb_images = [
+        img.convert("RGB") if img.mode != "RGB" else img for img in images
+    ]
     buffer = BytesIO()
-    rgb_image.save(buffer, format="PDF", resolution=dpi)
+    rgb_images[0].save(
+        buffer,
+        format="PDF",
+        resolution=dpi,
+        save_all=True,
+        append_images=rgb_images[1:],
+    )
     return buffer.getvalue()

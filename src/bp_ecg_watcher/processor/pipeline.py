@@ -27,9 +27,9 @@ from bp_ecg_watcher.metrics import (
     files_rejected_total,
     processing_duration_seconds,
 )
-from bp_ecg_watcher.processor.extractor import rasterize_page2
+from bp_ecg_watcher.processor.extractor import rasterize_all_pages
 from bp_ecg_watcher.processor.hasher import hash_bytes
-from bp_ecg_watcher.processor.image import image_to_pdf_bytes, resize_image
+from bp_ecg_watcher.processor.image import images_to_pdf_bytes, resize_image
 from bp_ecg_watcher.storage.minio_client import (
     build_metadata,
     format_exc_info,
@@ -165,18 +165,25 @@ def process_zip(
 
     assert isinstance(validation, ValidationSuccess)
 
-    # ── 6. Rasterize page 2 ────────────────────────────────────────────
+    # ── 6. Rasterize all pages ─────────────────────────────────────────
     original_pdf_hash: str = hash_bytes(pdf_bytes_raw)
-    pil_image = rasterize_page2(pdf_bytes, dpi=settings.rasterization_dpi)
+    pil_images = rasterize_all_pages(pdf_bytes, dpi=settings.rasterization_dpi)
 
-    # ── 7. Resize ─────────────────────────────────────────────────────
-    resized_image, img_width, img_height = resize_image(
-        pil_image, max_side_px=settings.image_max_side_px
-    )
+    # ── 7. Resize all pages ───────────────────────────────────────────────
+    resized_images: list = []
+    img_width: int = 0
+    img_height: int = 0
+    for page_idx, pil_image in enumerate(pil_images):
+        resized, w, h = resize_image(
+            pil_image, max_side_px=settings.image_max_side_px
+        )
+        resized_images.append(resized)
+        if page_idx == 0:
+            img_width, img_height = w, h  # record first-page dims for metadata
 
-    # ── 8. Embed resized image into a single-page PDF ─────────────────
-    output_pdf_bytes: bytes = image_to_pdf_bytes(
-        resized_image, dpi=settings.rasterization_dpi
+    # ── 8. Embed all pages into a multi-page PDF ────────────────────────
+    output_pdf_bytes: bytes = images_to_pdf_bytes(
+        resized_images, dpi=settings.rasterization_dpi
     )
 
     # ── 9. Hash output PDF and compress with zstandard ────────────────

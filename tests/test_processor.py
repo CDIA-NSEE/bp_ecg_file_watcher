@@ -3,14 +3,15 @@
 Covers:
 - hasher.py — BLAKE3 hash determinism
 - compressor.py — ByteCountingReader byte accounting and context-manager behaviour
-- image.py — resize_image and image_to_pdf_bytes
-- extractor.py — rasterize_page2
+- image.py — resize_image and images_to_pdf_bytes
+- extractor.py — rasterize_all_pages
 """
 
 from __future__ import annotations
 
 from io import BytesIO
 
+import pytest
 from PIL import Image
 
 from bp_ecg_watcher.processor.compressor import (
@@ -18,9 +19,9 @@ from bp_ecg_watcher.processor.compressor import (
     compress_bytes,
     compressed_counting_reader,
 )
-from bp_ecg_watcher.processor.extractor import rasterize_page2
+from bp_ecg_watcher.processor.extractor import rasterize_all_pages
 from bp_ecg_watcher.processor.hasher import hash_bytes
-from bp_ecg_watcher.processor.image import image_to_pdf_bytes, resize_image
+from bp_ecg_watcher.processor.image import images_to_pdf_bytes, resize_image
 
 # ---------------------------------------------------------------------------
 # hasher.hash_bytes
@@ -236,63 +237,79 @@ class TestResizeImage:
 
 
 # ---------------------------------------------------------------------------
-# image.image_to_pdf_bytes
+# image.images_to_pdf_bytes
 # ---------------------------------------------------------------------------
 
 
-class TestImageToPdfBytes:
-    """Verify image_to_pdf_bytes produces a valid single-page PDF."""
+class TestImagesToPdfBytes:
+    """Verify images_to_pdf_bytes produces a valid multi-page PDF."""
 
     def test_returns_bytes(self) -> None:
-        result = image_to_pdf_bytes(_make_image(100, 100))
+        result = images_to_pdf_bytes([_make_image(100, 100)])
         assert isinstance(result, bytes)
 
     def test_pdf_magic_bytes(self) -> None:
-        result = image_to_pdf_bytes(_make_image(100, 100))
+        result = images_to_pdf_bytes([_make_image(100, 100)])
         assert result[:4] == b"%PDF"
 
     def test_non_empty(self) -> None:
-        result = image_to_pdf_bytes(_make_image(50, 50))
+        result = images_to_pdf_bytes([_make_image(50, 50)])
         assert len(result) > 0
 
-    def test_single_page(self) -> None:
-        """Output PDF must contain exactly one page."""
+    def test_single_image_produces_one_page(self) -> None:
         import pypdf
 
-        data = image_to_pdf_bytes(_make_image(100, 80))
+        data = images_to_pdf_bytes([_make_image(100, 80)])
         reader = pypdf.PdfReader(BytesIO(data))
         assert len(reader.pages) == 1
 
-    def test_non_rgb_image_converted(self) -> None:
-        """A non-RGB image (e.g. RGBA) must not raise an error."""
-        img = _make_image(100, 100, mode="RGBA")
-        result = image_to_pdf_bytes(img)
+    def test_two_images_produce_two_pages(self) -> None:
+        """Two input images must produce a 2-page PDF."""
+        import pypdf
+
+        data = images_to_pdf_bytes([_make_image(100, 80), _make_image(100, 80)])
+        reader = pypdf.PdfReader(BytesIO(data))
+        assert len(reader.pages) == 2
+
+    def test_non_rgb_images_converted(self) -> None:
+        """Non-RGB images (e.g. RGBA) must not raise an error."""
+        imgs = [_make_image(100, 100, mode="RGBA"), _make_image(80, 80, mode="RGBA")]
+        result = images_to_pdf_bytes(imgs)
         assert result[:4] == b"%PDF"
 
+    def test_empty_list_raises(self) -> None:
+        with pytest.raises(ValueError, match="empty"):
+            images_to_pdf_bytes([])
+
 
 # ---------------------------------------------------------------------------
-# extractor.rasterize_page2
+# extractor.rasterize_all_pages
 # ---------------------------------------------------------------------------
 
 
-class TestRasterizePage2:
-    """Verify rasterize_page2 extracts and rasterizes the second page."""
+class TestRasterizeAllPages:
+    """Verify rasterize_all_pages extracts and rasterizes all PDF pages."""
 
-    def test_returns_pil_image(self) -> None:
+    def test_returns_list_of_pil_images(self) -> None:
         pdf = _make_two_page_pdf_bytes()
-        result = rasterize_page2(pdf, dpi=72)
-        assert isinstance(result, Image.Image)
+        result = rasterize_all_pages(pdf, dpi=72)
+        assert isinstance(result, list)
+        assert all(isinstance(img, Image.Image) for img in result)
 
-    def test_image_has_nonzero_size(self) -> None:
+    def test_two_page_pdf_returns_two_images(self) -> None:
         pdf = _make_two_page_pdf_bytes()
-        result = rasterize_page2(pdf, dpi=72)
-        w, h = result.size
-        assert w > 0
-        assert h > 0
+        result = rasterize_all_pages(pdf, dpi=72)
+        assert len(result) == 2
 
-    def test_higher_dpi_produces_larger_image(self) -> None:
+    def test_each_image_has_nonzero_size(self) -> None:
+        pdf = _make_two_page_pdf_bytes()
+        for img in rasterize_all_pages(pdf, dpi=72):
+            assert img.width > 0
+            assert img.height > 0
+
+    def test_higher_dpi_produces_larger_images(self) -> None:
         pdf72 = _make_two_page_pdf_bytes()
         pdf150 = _make_two_page_pdf_bytes()
-        img72 = rasterize_page2(pdf72, dpi=72)
-        img150 = rasterize_page2(pdf150, dpi=150)
-        assert img150.width > img72.width
+        imgs72 = rasterize_all_pages(pdf72, dpi=72)
+        imgs150 = rasterize_all_pages(pdf150, dpi=150)
+        assert imgs150[0].width > imgs72[0].width

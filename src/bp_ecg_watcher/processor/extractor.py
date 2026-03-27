@@ -1,7 +1,7 @@
 """PDF page rasterization using pypdfium2.
 
-Extracts page 2 (0-indexed: index 1) from a PDF stream and rasterizes it to a
-PIL Image entirely in memory. No intermediate files are written to disk.
+Rasterizes all pages of a PDF stream to a list of PIL Images entirely in
+memory. No intermediate files are written to disk.
 """
 
 from __future__ import annotations
@@ -14,12 +14,9 @@ from PIL import Image
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
-# Page index of the ECG/BP result page (0-indexed)
-TARGET_PAGE_INDEX: int = 1
 
-
-def rasterize_page2(pdf_bytes: BytesIO, dpi: int = 300) -> Image.Image:
-    """Rasterize page 2 of a PDF to a PIL Image.
+def rasterize_all_pages(pdf_bytes: BytesIO, dpi: int = 300) -> list[Image.Image]:
+    """Rasterize every page of a PDF to a list of PIL Images.
 
     The PDF is read entirely from *pdf_bytes* — no temporary files are created.
     The scale factor converts between PDF points (72 pt/inch) and the desired DPI.
@@ -29,32 +26,35 @@ def rasterize_page2(pdf_bytes: BytesIO, dpi: int = 300) -> Image.Image:
         dpi: Target rasterization resolution in dots per inch. Defaults to 300.
 
     Returns:
-        A :class:`PIL.Image.Image` in RGB mode.
+        A list of :class:`PIL.Image.Image` objects, one per page, in RGB mode.
 
     Raises:
-        ValueError: If the PDF has fewer than 2 pages.
-        RuntimeError: If pypdfium2 fails to render the page.
+        ValueError: If the PDF has no pages.
+        RuntimeError: If pypdfium2 fails to render any page.
     """
     pdf_bytes.seek(0)
     doc = pdfium.PdfDocument(pdf_bytes)  # type: ignore[arg-type]
 
     page_count = len(doc)
-    if page_count < TARGET_PAGE_INDEX + 1:
-        raise ValueError(
-            f"PDF has {page_count} page(s); "
-            f"cannot access page index {TARGET_PAGE_INDEX}"
-        )
+    if page_count == 0:
+        raise ValueError("PDF has no pages")
 
     scale: float = dpi / 72.0
-    page = doc[TARGET_PAGE_INDEX]
-    bitmap = page.render(scale=scale, rotation=0)
-    pil_image: Image.Image = bitmap.to_pil()
+    images: list[Image.Image] = []
 
-    logger.debug(
-        "page_rasterized",
-        dpi=dpi,
-        scale=scale,
-        width=pil_image.width,
-        height=pil_image.height,
-    )
-    return pil_image
+    for page_index in range(page_count):
+        page = doc[page_index]
+        bitmap = page.render(scale=scale, rotation=0)
+        pil_image: Image.Image = bitmap.to_pil()
+        images.append(pil_image)
+
+        logger.debug(
+            "page_rasterized",
+            page_index=page_index,
+            dpi=dpi,
+            scale=scale,
+            width=pil_image.width,
+            height=pil_image.height,
+        )
+
+    return images

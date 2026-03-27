@@ -49,7 +49,7 @@ def build_metadata(
         page_count: Number of pages in the validated source PDF (always 2).
         image_width: Width in pixels of the rasterized image after resize.
         image_height: Height in pixels of the rasterized image after resize.
-        rasterization_dpi: DPI used when rasterizing the PDF page.
+        rasterization_dpi: DPI used when rasterizing the PDF pages.
         original_pdf_hash: BLAKE3 hex digest of the raw PDF bytes from the ZIP.
         file_size_zip_bytes: Size in bytes of the original ZIP file.
         file_size_compressed_bytes: Size in bytes of the uploaded zstd stream.
