@@ -65,14 +65,14 @@ class DedupStore:
         self,
         zip_hash: str,
         source_path: Path,
-        destination_key: str,
+        output_path: str,
     ) -> None:
         """Insert a processed ZIP entry, silently ignoring duplicates.
 
         Args:
             zip_hash: BLAKE3 hex digest of the raw ZIP bytes.
             source_path: Filesystem path of the processed ZIP.
-            destination_key: S3 object key of the uploaded image.
+            output_path: Path of the written output file.
         """
         with self._db.connection_context():
             self._model.get_or_create(
@@ -80,6 +80,6 @@ class DedupStore:
                 defaults={
                     "processed_at": datetime.now(UTC).isoformat(),
                     "source_path": str(source_path),
-                    "destination_key": destination_key,
+                    "destination_key": output_path,
                 },
             )

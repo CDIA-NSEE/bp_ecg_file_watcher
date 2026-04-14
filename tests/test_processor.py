@@ -2,7 +2,6 @@
 
 Covers:
 - hasher.py — BLAKE3 hash determinism
-- compressor.py — ByteCountingReader byte accounting and context-manager behaviour
 - image.py — resize_image and images_to_pdf_bytes
 - extractor.py — rasterize_all_pages
 """
@@ -14,11 +13,6 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from bp_ecg_watcher.processor.compressor import (
-    ByteCountingReader,
-    compress_bytes,
-    compressed_counting_reader,
-)
 from bp_ecg_watcher.processor.extractor import rasterize_all_pages
 from bp_ecg_watcher.processor.hasher import hash_bytes
 from bp_ecg_watcher.processor.image import images_to_pdf_bytes, resize_image
@@ -55,124 +49,6 @@ class TestHashBytes:
     def test_large_payload_is_deterministic(self) -> None:
         data = b"x" * 1_000_000
         assert hash_bytes(data) == hash_bytes(data)
-
-
-# ---------------------------------------------------------------------------
-# compressor.ByteCountingReader
-# ---------------------------------------------------------------------------
-
-
-class TestByteCountingReader:
-    """Verify that ByteCountingReader correctly tracks bytes as they are read."""
-
-    def test_counts_read_bytes(self) -> None:
-        payload = b"hello world"
-        reader = ByteCountingReader(BytesIO(payload))  # type: ignore[arg-type]
-        data = reader.read()
-        assert data == payload
-        assert reader.bytes_read == len(payload)
-
-    def test_incremental_reads_accumulate(self) -> None:
-        payload = b"abcdefghij"
-        reader = ByteCountingReader(BytesIO(payload))  # type: ignore[arg-type]
-        reader.read(4)
-        reader.read(3)
-        reader.read(100)  # read past end — returns remaining 3
-        assert reader.bytes_read == len(payload)
-
-    def test_initial_count_is_zero(self) -> None:
-        reader = ByteCountingReader(BytesIO(b"data"))  # type: ignore[arg-type]
-        assert reader.bytes_read == 0
-
-    def test_read_zero_bytes(self) -> None:
-        reader = ByteCountingReader(BytesIO(b"data"))  # type: ignore[arg-type]
-        result = reader.read(0)
-        assert result == b""
-        assert reader.bytes_read == 0
-
-    def test_empty_stream(self) -> None:
-        reader = ByteCountingReader(BytesIO(b""))  # type: ignore[arg-type]
-        data = reader.read()
-        assert data == b""
-        assert reader.bytes_read == 0
-
-
-# ---------------------------------------------------------------------------
-# compressor.compressed_counting_reader — context manager
-# ---------------------------------------------------------------------------
-
-
-class TestCompressedCountingReader:
-    """Verify the context-manager compressor pipeline."""
-
-    def test_compressed_output_smaller_for_repeated_data(self) -> None:
-        """Highly compressible data should compress to fewer bytes."""
-        image_bytes = b"\x00" * 100_000
-        with compressed_counting_reader(image_bytes, level=3) as reader:
-            chunks: list[bytes] = []
-            while True:
-                chunk = reader.read(8192)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-        total = sum(len(c) for c in chunks)
-        assert reader.bytes_read == total
-        assert reader.bytes_read < len(image_bytes)
-
-    def test_bytes_read_matches_decompressed_roundtrip(self) -> None:
-        """Compressed bytes must decompress back to the original content."""
-        import zstandard
-
-        image_bytes = b"ECG data " * 1000
-        compressed_parts: list[bytes] = []
-        with compressed_counting_reader(image_bytes, level=1) as reader:
-            while True:
-                chunk = reader.read(8192)
-                if not chunk:
-                    break
-                compressed_parts.append(chunk)
-        compressed = b"".join(compressed_parts)
-        assert reader.bytes_read == len(compressed)
-
-        # stream_reader produces no content-size header — decompress via stream_reader
-        dctx = zstandard.ZstdDecompressor()
-        with dctx.stream_reader(BytesIO(compressed)) as r:
-            decompressed = r.read()
-        assert decompressed == image_bytes
-
-    def test_bytes_read_accessible_after_context_exit(self) -> None:
-        """bytes_read must remain accessible after the with block closes."""
-        image_bytes = b"some data " * 500
-        with compressed_counting_reader(image_bytes, level=1) as reader:
-            while reader.read(4096):
-                pass
-        assert reader.bytes_read > 0
-
-
-# ---------------------------------------------------------------------------
-# compressor.compress_bytes — convenience helper
-# ---------------------------------------------------------------------------
-
-
-class TestCompressBytes:
-    """Verify the compress_bytes convenience function."""
-
-    def test_returns_tuple(self) -> None:
-        compressed, size = compress_bytes(b"hello", level=1)
-        assert isinstance(compressed, bytes)
-        assert isinstance(size, int)
-
-    def test_size_matches_len(self) -> None:
-        compressed, size = compress_bytes(b"hello world", level=1)
-        assert size == len(compressed)
-
-    def test_decompressible(self) -> None:
-        import zstandard
-
-        original = b"round trip data"
-        compressed, _ = compress_bytes(original, level=3)
-        dctx = zstandard.ZstdDecompressor()
-        assert dctx.decompress(compressed) == original
 
 
 # ---------------------------------------------------------------------------
