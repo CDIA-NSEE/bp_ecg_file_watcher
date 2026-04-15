@@ -7,10 +7,8 @@ from the environment.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,9 +19,14 @@ class Settings(BaseSettings):
     input_directory: Path
     output_directory: Path
 
-    # Worker pools
-    io_workers: int = 8
-    cpu_workers: int = Field(default_factory=lambda: os.cpu_count() or 4)
+    # Dask cluster
+    dask_scheduler: str | None = None
+    n_workers: int = 24
+    cores_per_worker: int = 8
+    mem_per_worker_gb: int = 16
+
+    # Deduplication
+    redis_url: str = "redis://localhost:6379"
 
     # Processing parameters
     rasterization_dpi: int = 300

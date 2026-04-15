@@ -1,0 +1,62 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  dask-scheduler:
+    build: .
+    command: ["/app/.venv/bin/dask", "scheduler"]
+    ports:
+      - "8786:8786"   # TCP scheduler port
+      - "8787:8787"   # Dashboard
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 8786)); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  dask-worker:
+    build: .
+    command:
+      - "/app/.venv/bin/dask"
+      - "worker"
+      - "tcp://dask-scheduler:8786"
+      - "--nthreads=1"
+      - "--nprocs=1"
+    environment:
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./data/incoming:/data/incoming:ro
+      - ./data/output:/data/output
+    depends_on:
+      dask-scheduler:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+
+  app:
+    build: .
+    command: ["python", "-m", "bp_ecg_watcher.main"]
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DASK_SCHEDULER=tcp://dask-scheduler:8786
+      - INPUT_DIRECTORY=/data/incoming
+      - OUTPUT_DIRECTORY=/data/output
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=dev
+    volumes:
+      - ./data/incoming:/data/incoming:ro
+      - ./data/output:/data/output
+    depends_on:
+      dask-scheduler:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

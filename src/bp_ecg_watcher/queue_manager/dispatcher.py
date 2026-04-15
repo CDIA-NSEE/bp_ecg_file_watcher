@@ -1,87 +1,161 @@
-"""Batch runner for the bp_ecg processor.
+"""Dask-based distributed runner for the bp_ecg batch processor.
 
-Processes all .zip files in the input directory using a hybrid pool:
-threads handle I/O (read ZIP, write output), processes handle CPU work
-(rasterize + compress). Files are processed in chunks to bound memory
-usage when handling millions of files.
+Selects the right Dask client backend automatically:
+
+* ``settings.dask_scheduler`` is set  → connect to a running scheduler
+  (docker-compose or explicit TCP address).
+* ``SLURM_JOB_ID`` env var is present  → spawn Dask workers as SLURM jobs
+  via ``dask-jobqueue`` (HPC mode).
+* Neither condition                     → ``LocalCluster`` on the current
+  machine (development / single-node testing).
 """
 
 from __future__ import annotations
 
 import itertools
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+import os
+from functools import partial
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 import structlog
+from distributed import Client, LocalCluster, as_completed
 
 from bp_ecg_watcher.config import Settings
-from bp_ecg_watcher.dedup.store import DedupStore
 from bp_ecg_watcher.processor.pipeline import process_file
-from bp_ecg_watcher.processor.skip_logger import SkipLogger
+
+if TYPE_CHECKING:
+    pass
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
-_CHUNK_SIZE = 10_000
+# Maximum number of futures held in memory at once.  Keeps scheduler RAM
+# bounded when processing millions of files.
+_SUBMIT_CHUNK: int = 100_000
 
 
-class BatchRunner:
-    """Orchestrates chunk-wise batch processing of ZIP files.
+def build_client(settings: Settings) -> Client:
+    """Create the appropriate Dask ``Client`` for the current environment.
+
+    Selection order:
+
+    1. ``settings.dask_scheduler`` is non-empty → remote scheduler.
+    2. ``SLURM_JOB_ID`` is set                 → SLURMCluster (HPC).
+    3. Fallback                                 → LocalCluster.
 
     Args:
-        settings: Application settings (worker counts, paths, etc.).
-        dedup_store: Shared deduplication store.
-        skip_logger: Logs skipped files to file and terminal.
+        settings: Application settings.
+
+    Returns:
+        A connected ``Client``.  The caller is responsible for closing it
+        (use as a context manager).
+    """
+    scheduler = settings.dask_scheduler
+    if scheduler:
+        logger.info("dask_mode", mode="remote", scheduler=scheduler)
+        return Client(address=scheduler)
+
+    if os.environ.get("SLURM_JOB_ID"):
+        from dask_jobqueue import SLURMCluster  # type: ignore[import-untyped]
+
+        logger.info(
+            "dask_mode",
+            mode="slurm",
+            n_workers=settings.n_workers,
+            cores=settings.cores_per_worker,
+            memory_gb=settings.mem_per_worker_gb,
+        )
+        cluster = SLURMCluster(
+            queue="cpu",
+            cores=settings.cores_per_worker,
+            memory=f"{settings.mem_per_worker_gb}GB",
+            nanny=True,
+            walltime="48:00:00",
+            # Propagate all env vars (including REDIS_URL) to worker jobs.
+            job_extra_directives=["--export=ALL"],
+        )
+        cluster.scale(settings.n_workers)
+        return Client(cluster)
+
+    logger.info("dask_mode", mode="local")
+    return Client(
+        LocalCluster(
+            n_workers=os.cpu_count() or 4,
+            threads_per_worker=1,
+            processes=True,
+        )
+    )
+
+
+class DaskRunner:
+    """Orchestrates Dask-distributed processing of ZIP files.
+
+    Args:
+        settings: Application settings.
     """
 
-    def __init__(
-        self,
-        settings: Settings,
-        dedup_store: DedupStore,
-        skip_logger: SkipLogger,
-    ) -> None:
+    def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._dedup = dedup_store
-        self._skip_logger = skip_logger
 
-    def run(self, zip_paths: Iterable[Path]) -> tuple[int, int]:
-        """Process all zip_paths and return (processed, failed) counts.
+    def run(
+        self,
+        zip_paths: Iterable[Path],
+        *,
+        _client: Client | None = None,
+    ) -> tuple[int, int]:
+        """Submit *zip_paths* to Dask workers and track completion.
 
-        Submits work in chunks of _CHUNK_SIZE to avoid holding millions of
-        futures in memory simultaneously.
+        Files are submitted in chunks of ``_SUBMIT_CHUNK`` to bound scheduler
+        memory when processing millions of files.
+
+        Args:
+            zip_paths: Iterable of paths to ``.zip`` files.
+            _client: Optional pre-built ``Client`` (testing hook — bypasses
+                ``build_client`` and skips context-manager close).
+
+        Returns:
+            ``(processed, failed)`` counts.
         """
+        skip_log_path = self._settings.output_directory / "skip.log"
+        task = partial(
+            process_file,
+            settings=self._settings,
+            redis_url=self._settings.redis_url,
+            skip_log_path=skip_log_path,
+        )
+
+        if _client is not None:
+            return self._run_with_client(_client, task, zip_paths)
+
+        with build_client(self._settings) as client:
+            return self._run_with_client(client, task, zip_paths)
+
+    def _run_with_client(
+        self,
+        client: Client,
+        task: partial,  # type: ignore[type-arg]
+        zip_paths: Iterable[Path],
+    ) -> tuple[int, int]:
         processed = 0
         failed = 0
 
-        with (
-            ProcessPoolExecutor(max_workers=self._settings.cpu_workers) as cpu_pool,
-            ThreadPoolExecutor(max_workers=self._settings.io_workers) as io_pool,
-        ):
-            for chunk in itertools.batched(zip_paths, _CHUNK_SIZE):
-                futures = {
-                    io_pool.submit(
-                        process_file,
-                        zp,
-                        self._settings,
-                        self._dedup,
-                        self._skip_logger,
-                        cpu_pool,
-                    ): zp
-                    for zp in chunk
-                }
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                        processed += 1
-                    except Exception as exc:
-                        failed += 1
-                        logger.error(
-                            "file_failed",
-                            path=str(futures[future]),
-                            error=str(exc),
-                        )
-                    total = processed + failed
-                    if total % 1000 == 0:
-                        logger.info("progress", total=total, processed=processed, failed=failed)
+        for chunk in itertools.batched(zip_paths, _SUBMIT_CHUNK):
+            futures = client.map(task, list(chunk), pure=False)
+            for future in as_completed(futures, raise_errors=False):
+                if future.status == "error":
+                    failed += 1
+                    logger.error("file_failed", error=str(future.exception()))
+                else:
+                    processed += 1
+
+                total = processed + failed
+                if total % 1_000 == 0:
+                    logger.info(
+                        "progress",
+                        total=total,
+                        processed=processed,
+                        failed=failed,
+                    )
 
         return processed, failed
+

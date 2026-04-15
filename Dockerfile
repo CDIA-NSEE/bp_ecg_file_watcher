@@ -14,8 +14,5 @@ COPY --chown=appuser:appgroup src/ src/
 USER 1001
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
-# Mount a named volume here to persist the SQLite dedup database across restarts.
-# Example: docker run -v bp-ecg-watcher-dedup:/home/appuser/.bp_ecg ...
-VOLUME ["/home/appuser/.bp_ecg"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "-m", "bp_ecg_watcher.main"]

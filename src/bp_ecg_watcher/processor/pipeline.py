@@ -1,16 +1,15 @@
 """Processing pipeline for the bp_ecg batch processor.
 
-Two-stage hybrid pipeline:
-- ``rasterize_and_compress`` — CPU-heavy; runs in a ProcessPoolExecutor worker.
-  Must be a top-level function so it is picklable.
-- ``process_file`` — I/O stage; runs in a ThreadPoolExecutor worker.
-  Reads the ZIP, validates, delegates CPU work, writes output.
+Single-stage pipeline executed directly inside each Dask worker process:
+``process_file`` reads the ZIP, validates the PDF, rasterizes and compresses
+it, and writes the output.  All CPU-heavy work runs inline — Dask already
+assigns one worker process per CPU core, so there is no need for a nested
+``ProcessPoolExecutor``.
 """
 
 from __future__ import annotations
 
 import zipfile
-from concurrent.futures import ProcessPoolExecutor
 from io import BytesIO
 from pathlib import Path
 
@@ -18,7 +17,7 @@ import structlog
 import zstandard
 
 from bp_ecg_watcher.config import Settings
-from bp_ecg_watcher.dedup.store import DedupStore
+from bp_ecg_watcher.dedup.redis_store import RedisStore
 from bp_ecg_watcher.processor.extractor import rasterize_all_pages
 from bp_ecg_watcher.processor.hasher import hash_bytes
 from bp_ecg_watcher.processor.image import images_to_pdf_bytes, resize_image
@@ -34,9 +33,7 @@ def rasterize_and_compress(
     max_side: int,
     zstd_level: int,
 ) -> bytes:
-    """CPU-heavy stage: rasterize all pages, resize, re-embed as PDF, compress.
-
-    Top-level function so it is picklable for ProcessPoolExecutor.
+    """Rasterize all pages, resize, re-embed as PDF, compress with zstd.
 
     Args:
         pdf_bytes_raw: Raw PDF bytes extracted from the ZIP.
@@ -56,26 +53,32 @@ def rasterize_and_compress(
 
 def process_file(
     zip_path: Path,
+    *,
     settings: Settings,
-    dedup_store: DedupStore,
-    skip_logger: SkipLogger,
-    cpu_pool: ProcessPoolExecutor,
+    redis_url: str,
+    skip_log_path: Path,
 ) -> None:
-    """I/O stage: read ZIP, validate, delegate CPU work, write output.
+    """Read ZIP, validate, rasterize, compress, and write output.
 
-    Runs in a thread from the I/O ThreadPoolExecutor.
+    Designed to run inside a Dask worker.  Each call reconstructs lightweight
+    helpers (``RedisStore``, ``SkipLogger``) from plain serialisable arguments
+    so that this function remains picklable.
 
     Args:
         zip_path: Path to the .zip file to process.
-        settings: Application settings.
-        dedup_store: Shared deduplication store.
-        skip_logger: Logs skipped files to file and terminal.
-        cpu_pool: ProcessPoolExecutor for CPU-heavy work.
+        settings: Application settings (picklable Pydantic model).
+        redis_url: Redis connection URL for deduplication.
+        skip_log_path: Path to the skip log file.
     """
+    dedup_store = RedisStore(redis_url)
+    skip_logger = SkipLogger(skip_log_path)
+
     zip_bytes = zip_path.read_bytes()
     zip_hash = hash_bytes(zip_bytes)
 
-    if dedup_store.is_duplicate(zip_hash):
+    # Atomically reserve this hash.  If another worker already owns it
+    # (status "pending" or complete), skip immediately — no TOCTOU window.
+    if not dedup_store.try_reserve(zip_hash):
         skip_logger.log(zip_path, "duplicate")
         return
 
@@ -86,22 +89,25 @@ def process_file(
                 raise ValueError("No PDF found inside ZIP")
             pdf_bytes_raw = zf.read(pdf_names[0])
     except (zipfile.BadZipFile, KeyError, ValueError) as exc:
+        dedup_store.release(zip_hash)  # allow retry if ZIP was transient error
         skip_logger.log(zip_path, f"zip-error: {exc}")
         return
 
     validation = validate_pdf(BytesIO(pdf_bytes_raw))
     if isinstance(validation, ValidationFailure):
+        dedup_store.release(zip_hash)
         skip_logger.log(zip_path, str(validation.reason))
         return
 
-    compressed = cpu_pool.submit(
-        rasterize_and_compress,
+    compressed = rasterize_and_compress(
         pdf_bytes_raw,
         settings.rasterization_dpi,
         settings.image_max_side_px,
         settings.zstd_level,
-    ).result()
+    )
 
     out_path = settings.output_directory / f"{zip_hash}.pdf.zst"
     out_path.write_bytes(compressed)
-    dedup_store.record_processed(zip_hash, zip_path, str(out_path))
+    dedup_store.mark_complete(zip_hash, str(out_path))
+    logger.debug("file_processed", path=str(zip_path), output=str(out_path))
+

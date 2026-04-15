@@ -40,3 +40,4 @@ class TestConfigureLogging:
     def test_can_call_multiple_times(self, dev_settings: Settings) -> None:
         configure_logging(dev_settings)
         configure_logging(dev_settings)
+

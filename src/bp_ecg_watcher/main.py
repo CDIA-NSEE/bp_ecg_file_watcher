@@ -1,6 +1,7 @@
 """Entry point for the bp_ecg batch processor.
 
-Scans input_directory for .zip files and processes them all.
+Scans input_directory for .zip files and processes them all using
+a Dask-distributed cluster (local, docker-compose, or SLURM HPC).
 
 Usage::
 
@@ -12,9 +13,7 @@ from __future__ import annotations
 import structlog
 
 from bp_ecg_watcher.config import Settings
-from bp_ecg_watcher.dedup.store import DedupStore
-from bp_ecg_watcher.processor.skip_logger import SkipLogger
-from bp_ecg_watcher.queue_manager.dispatcher import BatchRunner
+from bp_ecg_watcher.queue_manager.dispatcher import DaskRunner
 
 
 def configure_logging(settings: Settings) -> None:
@@ -51,19 +50,16 @@ def main() -> None:
     settings.input_directory.mkdir(parents=True, exist_ok=True)
     settings.output_directory.mkdir(parents=True, exist_ok=True)
 
-    dedup = DedupStore()
-    skip_logger = SkipLogger(settings.output_directory / "skip.log")
-
     log = logger.bind(
         input_dir=str(settings.input_directory),
         output_dir=str(settings.output_directory),
-        io_workers=settings.io_workers,
-        cpu_workers=settings.cpu_workers,
+        redis_url=settings.redis_url,
+        n_workers=settings.n_workers,
     )
     log.info("batch_starting")
 
     zip_paths = settings.input_directory.glob("*.zip")
-    runner = BatchRunner(settings, dedup, skip_logger)
+    runner = DaskRunner(settings)
     processed, failed = runner.run(zip_paths)
 
     log.info("batch_complete", processed=processed, failed=failed)
@@ -71,3 +67,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
