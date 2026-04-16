@@ -1,4 +1,12 @@
 services:
+  init-permissions:
+    image: busybox
+    user: root
+    command: ["sh", "-c", "chmod -R 777 /data/dedup /data/output"]
+    volumes:
+      - ./data/output:/data/output
+      - ./data/dedup:/data/dedup
+
   dask-scheduler:
     build: .
     command: ["/app/.venv/bin/dask", "scheduler"]
@@ -27,6 +35,8 @@ services:
     depends_on:
       dask-scheduler:
         condition: service_healthy
+      init-permissions:
+        condition: service_completed_successfully
     deploy:
       replicas: 3
 
@@ -47,3 +57,5 @@ services:
     depends_on:
       dask-scheduler:
         condition: service_healthy
+      init-permissions:
+        condition: service_completed_successfully
