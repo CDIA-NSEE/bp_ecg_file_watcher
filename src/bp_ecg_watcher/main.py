@@ -53,7 +53,6 @@ def main() -> None:
     log = logger.bind(
         input_dir=str(settings.input_directory),
         output_dir=str(settings.output_directory),
-        redis_url=settings.redis_url,
         n_workers=settings.n_workers,
     )
     log.info("batch_starting")
