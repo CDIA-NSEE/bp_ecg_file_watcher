@@ -9,7 +9,7 @@ services:
 
   dask-scheduler:
     build: .
-    command: ["/app/.venv/bin/dask", "scheduler"]
+    command: ["/app/.venv/bin/dask", "scheduler", "--host", "0.0.0.0"]
     ports:
       - "8786:8786"   # TCP scheduler port
       - "8787:8787"   # Dashboard
@@ -26,6 +26,8 @@ services:
       - "worker"
       - "tcp://dask-scheduler:8786"
       - "--nthreads=1"
+      - "--no-nanny"
+    restart: on-failure
     environment:
       - DEDUP_DIRECTORY=/data/dedup
     volumes:
