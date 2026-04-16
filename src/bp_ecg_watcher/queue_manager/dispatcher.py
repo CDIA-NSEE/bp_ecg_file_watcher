@@ -77,10 +77,10 @@ def build_client(settings: Settings) -> Client:
         cluster.scale(settings.n_workers)
         return Client(cluster)
 
-    logger.info("dask_mode", mode="local")
+    logger.info("dask_mode", mode="local", n_workers=settings.n_workers)
     return Client(
         LocalCluster(
-            n_workers=os.cpu_count() or 4,
+            n_workers=settings.n_workers,
             threads_per_worker=1,
             processes=True,
         )
