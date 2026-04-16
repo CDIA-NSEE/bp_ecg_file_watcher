@@ -120,7 +120,6 @@ class DaskRunner:
         task = partial(
             process_file,
             settings=self._settings,
-            redis_url=self._settings.redis_url,
             skip_log_path=skip_log_path,
         )
 

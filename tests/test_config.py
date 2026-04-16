@@ -28,12 +28,20 @@ class TestSettings:
         assert s.mem_per_worker_gb == 16
         assert s.dask_scheduler is None
 
-    def test_default_redis_url(self, tmp_path: Path) -> None:
+    def test_default_dedup_directory(self, tmp_path: Path) -> None:
         s = Settings(
             input_directory=tmp_path / "input",
             output_directory=tmp_path / "output",
         )
-        assert s.redis_url == "redis://localhost:6379"
+        assert s.dedup_directory == tmp_path / "output" / ".dedup"
+
+    def test_explicit_dedup_directory(self, tmp_path: Path) -> None:
+        s = Settings(
+            input_directory=tmp_path / "input",
+            output_directory=tmp_path / "output",
+            dedup_directory=tmp_path / "custom_dedup",
+        )
+        assert s.dedup_directory == tmp_path / "custom_dedup"
 
     def test_default_processing_parameters(self, tmp_path: Path) -> None:
         s = Settings(
@@ -49,12 +57,12 @@ class TestSettings:
             input_directory=tmp_path / "input",
             output_directory=tmp_path / "output",
             environment="prod",
-            redis_url="redis://redis-host:6379",
+            dedup_directory=tmp_path / "my_dedup",
             dask_scheduler="tcp://scheduler:8786",
             n_workers=48,
         )
         assert s.environment == "prod"
-        assert s.redis_url == "redis://redis-host:6379"
+        assert s.dedup_directory == tmp_path / "my_dedup"
         assert s.dask_scheduler == "tcp://scheduler:8786"
         assert s.n_workers == 48
 

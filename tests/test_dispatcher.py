@@ -7,13 +7,10 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import fakeredis
 import pytest
-import redis
 from distributed import Client
 
 from bp_ecg_watcher.config import Settings
-from bp_ecg_watcher.dedup import redis_store as rs_module
 from bp_ecg_watcher.queue_manager.dispatcher import DaskRunner, build_client
 
 
@@ -44,36 +41,11 @@ def dask_client():
 
 
 @pytest.fixture()
-def fake_server():
-    return fakeredis.FakeServer()
-
-
-@pytest.fixture(autouse=True)
-def mock_redis_connections(fake_server: fakeredis.FakeServer):
-    """Redirect all Redis connections to fakeredis for the duration of a test."""
-    rs_module._PROCESS_POOLS.clear()
-    with (
-        patch.object(
-            redis.ConnectionPool,
-            "from_url",
-            return_value=MagicMock(),
-        ),
-        patch.object(
-            redis,
-            "Redis",
-            side_effect=lambda **_kw: fakeredis.FakeRedis(server=fake_server),
-        ),
-    ):
-        yield
-    rs_module._PROCESS_POOLS.clear()
-
-
-@pytest.fixture()
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         input_directory=tmp_path / "input",
         output_directory=tmp_path / "output",
-        redis_url="redis://fake:6379",
+        dedup_directory=tmp_path / "dedup",
     )
 
 
@@ -226,7 +198,6 @@ class TestDaskRunnerIntegration:
     def test_duplicate_zip_is_skipped(
         self,
         settings: Settings,
-        fake_server: fakeredis.FakeServer,
         dask_client: Client,
         tmp_path: Path,
     ) -> None:

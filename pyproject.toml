@@ -12,7 +12,6 @@ dependencies = [
     "pydantic-settings>=2.0",
     "dask[distributed]>=2024.1",
     "dask-jobqueue>=0.8",
-    "redis>=5.0",
 ]
 
 [dependency-groups]
@@ -25,7 +24,6 @@ dev = [
     "reportlab>=4.0",
     "taskipy>=1.12",
     "bandit[toml]>=1.7",
-    "fakeredis>=2.0",
 ]
 
 [build-system]

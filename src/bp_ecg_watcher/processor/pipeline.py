@@ -17,7 +17,7 @@ import structlog
 import zstandard
 
 from bp_ecg_watcher.config import Settings
-from bp_ecg_watcher.dedup.redis_store import RedisStore
+from bp_ecg_watcher.dedup.filesystem_store import FilesystemStore
 from bp_ecg_watcher.processor.extractor import rasterize_all_pages
 from bp_ecg_watcher.processor.hasher import hash_bytes
 from bp_ecg_watcher.processor.image import images_to_pdf_bytes, resize_image
@@ -55,22 +55,21 @@ def process_file(
     zip_path: Path,
     *,
     settings: Settings,
-    redis_url: str,
     skip_log_path: Path,
 ) -> None:
     """Read ZIP, validate, rasterize, compress, and write output.
 
     Designed to run inside a Dask worker.  Each call reconstructs lightweight
-    helpers (``RedisStore``, ``SkipLogger``) from plain serialisable arguments
-    so that this function remains picklable.
+    helpers (``FilesystemStore``, ``SkipLogger``) from plain serialisable
+    arguments so that this function remains picklable.
 
     Args:
         zip_path: Path to the .zip file to process.
         settings: Application settings (picklable Pydantic model).
-        redis_url: Redis connection URL for deduplication.
         skip_log_path: Path to the skip log file.
     """
-    dedup_store = RedisStore(redis_url)
+    assert settings.dedup_directory is not None  # guaranteed by model_validator
+    dedup_store = FilesystemStore(settings.dedup_directory)
     skip_logger = SkipLogger(skip_log_path)
 
     zip_bytes = zip_path.read_bytes()
