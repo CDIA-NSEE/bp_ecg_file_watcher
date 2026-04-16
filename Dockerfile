@@ -14,5 +14,6 @@ COPY --chown=appuser:appgroup src/ src/
 USER 1001
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH="/app/src"
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "-m", "bp_ecg_watcher.main"]
