@@ -27,6 +27,7 @@ mkdir -p logs
 # ---------------------------------------------------------------------------
 # Environment activation
 # ---------------------------------------------------------------------------
+source $HOME/miniconda3/bin/activate
 conda activate bp_ecg
 
 # ---------------------------------------------------------------------------
@@ -35,7 +36,7 @@ conda activate bp_ecg
 export INPUT_DIRECTORY="${INPUT_DIRECTORY:-/home/$USER/data/incoming}"
 export OUTPUT_DIRECTORY="${OUTPUT_DIRECTORY:-/home/$USER/data/output}"
 export DEDUP_DIRECTORY="${DEDUP_DIRECTORY:-${OUTPUT_DIRECTORY}/.dedup}"
-export N_WORKERS="${N_WORKERS:-24}"
+export N_WORKERS="${N_WORKERS:-32}"
 export CORES_PER_WORKER="${CORES_PER_WORKER:-8}"
 export MEM_PER_WORKER_GB="${MEM_PER_WORKER_GB:-16}"
 export LOG_LEVEL="${LOG_LEVEL:-INFO}"
