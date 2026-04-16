@@ -3,7 +3,7 @@
 #
 # This script runs on a single node with minimal resources.
 # It starts a Dask SLURMCluster which automatically submits worker jobs
-# across the cluster (n01, n02, n03) via dask-jobqueue.
+# across the cluster (n01, n02) via dask-jobqueue.
 #
 # Usage:
 #   sbatch bp_ecg_job.slurm
