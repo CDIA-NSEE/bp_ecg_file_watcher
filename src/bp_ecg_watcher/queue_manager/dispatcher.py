@@ -68,6 +68,7 @@ def build_client(settings: Settings) -> Client:
         cluster = SLURMCluster(
             queue="cpu",
             cores=settings.cores_per_worker,
+            processes=settings.cores_per_worker,
             memory=f"{settings.mem_per_worker_gb}GB",
             nanny=True,
             walltime="48:00:00",
