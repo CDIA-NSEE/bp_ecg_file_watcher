@@ -10,6 +10,9 @@ services:
   dask-scheduler:
     build: .
     command: ["/app/.venv/bin/dask", "scheduler", "--host", "0.0.0.0"]
+    security_opt:
+      - apparmor:unconfined
+    stop_grace_period: 15s
     ports:
       - "8786:8786"   # TCP scheduler port
       - "8787:8787"   # Dashboard
@@ -27,6 +30,9 @@ services:
       - "tcp://dask-scheduler:8786"
       - "--nthreads=1"
       - "--no-nanny"
+    security_opt:
+      - apparmor:unconfined
+    stop_grace_period: 15s
     restart: on-failure
     environment:
       - DEDUP_DIRECTORY=/data/dedup
@@ -45,6 +51,9 @@ services:
   app:
     build: .
     command: ["python", "-m", "bp_ecg_watcher.main"]
+    security_opt:
+      - apparmor:unconfined
+    stop_grace_period: 15s
     environment:
       - DEDUP_DIRECTORY=/data/dedup
       - DASK_SCHEDULER=tcp://dask-scheduler:8786
