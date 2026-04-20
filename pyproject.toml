@@ -23,7 +23,7 @@ dev = [
     "pyrefly>=0.1",
     "reportlab>=4.0",
     "taskipy>=1.12",
-    "bandit[toml]>=1.7",
+    "bandit[toml]>=1.9.4",
 ]
 
 [build-system]
