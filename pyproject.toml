@@ -9,7 +9,7 @@ dependencies = [
     "blake3>=0.4",
     "zstandard>=0.22",
     "structlog>=24.0",
-    "pydantic-settings>=2.0",
+    "pydantic-settings>=2.13.1",
     "dask[distributed]>=2024.1",
     "dask-jobqueue>=0.8",
 ]
